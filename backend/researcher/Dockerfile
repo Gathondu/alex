@@ -1,3 +1,6 @@
+# Build from backend/: docker build -f researcher/Dockerfile .
+# Includes backend/lll_model.py (shared with other services) + researcher app.
+
 FROM --platform=linux/amd64 python:3.12-slim
 
 WORKDIR /app
@@ -15,18 +18,16 @@ RUN npx -y playwright install --with-deps chromium
 # Install Python package manager
 RUN pip install uv
 
-# Copy project files
-COPY pyproject.toml uv.lock ./
+# Researcher package metadata and lockfile
+COPY researcher/pyproject.toml researcher/uv.lock ./
 
 # Install Python dependencies during build
-# uv will automatically install packages for the container's architecture (linux/amd64)
 RUN uv sync --frozen --no-install-project
 
-# Copy application code
-COPY *.py ./
+# Shared model helper (single source: backend/lll_model.py) + researcher modules
+COPY lll_model.py ./
+COPY researcher/*.py ./
 
-# Expose port
 EXPOSE 8000
 
-# Run the application (dependencies already installed)
 CMD ["uv", "run", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,9 @@
+# Used when build context is backend/ (researcher Docker image).
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+.env
+.env.*
+.git
+*.md

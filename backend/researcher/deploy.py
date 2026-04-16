@@ -95,21 +95,28 @@ def main():
     timestamp = int(time.time())
     image_tag = f"deploy-{timestamp}"
 
-    # Build Docker image
+    # Build Docker image (context: backend/ so backend/lll_model.py is included)
+    backend_dir = Path(__file__).resolve().parent.parent
     print(f"\nBuilding Docker image for linux/amd64 with tag: {image_tag}")
-    print("(This ensures compatibility with AWS App Runner)")
-    run_command(
-        [
-            "docker",
-            "build",
-            "--platform",
-            "linux/amd64",
-            "-t",
-            f"{ecr_repository}:{image_tag}",
-            # Removed --no-cache to use Docker layer caching for faster builds
-            ".",
-        ]
-    )
+    print("(Context: backend/, includes lll_model.py; compatible with AWS App Runner)")
+    build_dir = os.getcwd()
+    try:
+        os.chdir(backend_dir)
+        run_command(
+            [
+                "docker",
+                "build",
+                "--platform",
+                "linux/amd64",
+                "-f",
+                "researcher/Dockerfile",
+                "-t",
+                f"{ecr_repository}:{image_tag}",
+                ".",
+            ]
+        )
+    finally:
+        os.chdir(build_dir)
 
     # Tag for ECR with both unique tag and latest
     print("\nTagging image for ECR...")

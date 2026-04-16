@@ -1,4 +1,4 @@
-# Manual deploy: build backend/researcher Docker image, push to ECR, update App Runner.
+# Manual deploy: Docker build context is backend/ (-f researcher/Dockerfile) so backend/lll_model.py is included; push to ECR; update App Runner.
 # - Docker build/tag/push + apprunner update-service + wait loop follow backend/researcher/deploy.py.
 # - App Runner RuntimeEnvironmentVariables match terraform/4_researcher/main.tf (six keys), not deploy.py
 #   (deploy.py only passes OPENAI_API_KEY, ALEX_API_KEY, ALEX_API_ENDPOINT).
@@ -85,15 +85,15 @@ jobs:
             | docker login --username AWS --password-stdin "$ECR_URL"
 
       - name: Build and push Docker image
-        working-directory: backend/researcher
+        working-directory: backend
         env:
           ECR_URL: ${{ steps.ecr.outputs.ecr_url }}
         run: |
           set -euo pipefail
           IMAGE_TAG="deploy-$(date +%s)"
           echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
-          echo "Building alex-researcher:${IMAGE_TAG} (linux/amd64)"
-          docker build --platform linux/amd64 -t "alex-researcher:${IMAGE_TAG}" .
+          echo "Building alex-researcher:${IMAGE_TAG} (linux/amd64, context: backend/, includes lll_model.py)"
+          docker build --platform linux/amd64 -f researcher/Dockerfile -t "alex-researcher:${IMAGE_TAG}" .
           docker tag "alex-researcher:${IMAGE_TAG}" "${ECR_URL}:${IMAGE_TAG}"
           docker tag "alex-researcher:${IMAGE_TAG}" "${ECR_URL}:latest"
           docker push "${ECR_URL}:${IMAGE_TAG}"

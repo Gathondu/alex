@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Optional
 
 from agents.extensions.models.litellm_model import LitellmModel
 from dotenv import find_dotenv, load_dotenv
@@ -21,5 +22,6 @@ def get_model():
     return LitellmModel(model=model, api_key=api_key, base_url=base_url)
 
 
-model: LitellmModel = get_model()
-model_id: str = model.model
+_model = get_model()
+model: Optional[LitellmModel] = _model
+model_id: str = _model.model if _model is not None else ""
