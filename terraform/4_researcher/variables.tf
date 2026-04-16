@@ -25,3 +25,21 @@ variable "scheduler_enabled" {
   type        = bool
   default     = false
 }
+
+variable "openrouter_api_key" {
+  description = "Openrouter api key for the researcher agent"
+  type        = string
+  sensitive   = true
+}
+
+variable "openrouter_base_url" {
+  description = "Openrouter base url for the models"
+  type        = string
+  default     = "https://openrouter.ai/api/v1"
+}
+
+variable "openrouter_model" {
+  description = "Default model to use with openrouter"
+  type        = string
+  default     = "openai/gpt-oss-20b:free"
+}
