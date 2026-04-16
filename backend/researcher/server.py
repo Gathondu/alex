@@ -2,22 +2,22 @@
 Alex Researcher Service - Investment Advice Agent
 """
 
-import os
 import logging
-from datetime import datetime, UTC
+import os
+from datetime import UTC, datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from dotenv import load_dotenv
 from agents import Agent, Runner, trace
-from agents.extensions.models.litellm_model import LitellmModel
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from lll_model import model, model_id
+from pydantic import BaseModel
 
 # Suppress LiteLLM warnings about optional dependencies
 logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
 
 # Import from our modules
-from context import get_agent_instructions, DEFAULT_RESEARCH_PROMPT
+from context import DEFAULT_RESEARCH_PROMPT, get_agent_instructions
 from mcp_servers import create_playwright_mcp_server
 from tools import ingest_financial_document
 
@@ -40,22 +40,6 @@ async def run_research_agent(topic: str = None) -> str:
         query = f"Research this investment topic: {topic}"
     else:
         query = DEFAULT_RESEARCH_PROMPT
-
-    # Please override these variables with the region you are using
-    # Other choices: us-west-2 (for OpenAI OSS models) and eu-central-1
-    REGION = "us-east-1"
-    os.environ["AWS_REGION_NAME"] = REGION  # LiteLLM's preferred variable
-    os.environ["AWS_REGION"] = REGION  # Boto3 standard
-    os.environ["AWS_DEFAULT_REGION"] = REGION  # Fallback
-
-    # Please override this variable with the model you are using
-    # Common choices: bedrock/eu.amazon.nova-pro-v1:0 for EU and bedrock/us.amazon.nova-pro-v1:0 for US
-    # or bedrock/amazon.nova-pro-v1:0 if you are not using inference profiles
-    # bedrock/openai.gpt-oss-120b-1:0 for OpenAI OSS models
-    # bedrock/converse/us.anthropic.claude-sonnet-4-20250514-v1:0 for Claude Sonnet 4
-    # NOTE that nova-pro is needed to support tools and MCP servers; nova-lite is not enough - thank you Yuelin L.!
-    MODEL = "bedrock/us.amazon.nova-pro-v1:0"
-    model = LitellmModel(model=MODEL)
 
     # Create and run the agent with MCP server
     with trace("Researcher"):
@@ -124,7 +108,11 @@ async def research_auto():
         }
     except Exception as e:
         print(f"Error in automated research: {e}")
-        return {"status": "error", "timestamp": datetime.now(UTC).isoformat(), "error": str(e)}
+        return {
+            "status": "error",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "error": str(e),
+        }
 
 
 @app.get("/health")
@@ -142,7 +130,9 @@ async def health():
     return {
         "service": "Alex Researcher",
         "status": "healthy",
-        "alex_api_configured": bool(os.getenv("ALEX_API_ENDPOINT") and os.getenv("ALEX_API_KEY")),
+        "alex_api_configured": bool(
+            os.getenv("ALEX_API_ENDPOINT") and os.getenv("ALEX_API_KEY")
+        ),
         "timestamp": datetime.now(UTC).isoformat(),
         "debug_container": container_indicators,
         "aws_region": os.environ.get("AWS_DEFAULT_REGION", "not set"),
@@ -173,13 +163,12 @@ async def test_bedrock():
             bedrock_client = boto3.client("bedrock", region_name="us-west-2")
             models = bedrock_client.list_foundation_models()
             openai_models = [
-                m["modelId"] for m in models["modelSummaries"] if "openai" in m["modelId"].lower()
+                m["modelId"]
+                for m in models["modelSummaries"]
+                if "openai" in m["modelId"].lower()
             ]
         except Exception as list_error:
             openai_models = f"Error listing: {str(list_error)}"
-
-        # Try basic model invocation with Nova Pro
-        model = LitellmModel(model="bedrock/amazon.nova-pro-v1:0")
 
         agent = Agent(
             name="Test Agent",
@@ -187,11 +176,13 @@ async def test_bedrock():
             model=model,
         )
 
-        result = await Runner.run(agent, input="Say hello in 5 words or less", max_turns=1)
+        result = await Runner.run(
+            agent, input="Say hello in 5 words or less", max_turns=1
+        )
 
         return {
             "status": "success",
-            "model": str(model.model),  # Use actual model from LitellmModel
+            "model": model_id,
             "region": actual_region,
             "response": result.final_output,
             "debug": {
@@ -208,7 +199,9 @@ async def test_bedrock():
             "type": type(e).__name__,
             "traceback": traceback.format_exc(),
             "debug": {
-                "boto3_session_region": session.region_name if "session" in locals() else "unknown",
+                "boto3_session_region": session.region_name
+                if "session" in locals()
+                else "unknown",
                 "env_vars": {
                     "AWS_REGION_NAME": os.environ.get("AWS_REGION_NAME"),
                     "AWS_REGION": os.environ.get("AWS_REGION"),

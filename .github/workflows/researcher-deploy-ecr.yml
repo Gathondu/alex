@@ -41,6 +41,9 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ALEX_API_KEY: ${{ secrets.ALEX_API_KEY }}
       ALEX_API_ENDPOINT: ${{ secrets.ALEX_API_ENDPOINT }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_BASE_URL: ${{ vars.OPENROUTER_BASE_URL }}
+      OPENROUTER_MODEL: ${{ vars.OPENROUTER_MODEL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -135,6 +138,9 @@ jobs:
             --arg alexk "${ALEX_API_KEY:-}" \
             --arg alexe "${ALEX_API_ENDPOINT:-}" \
             --arg role "$ACCESS_ROLE_ARN" \
+            --arg openrouter_api_key "${OPENROUTER_API_KEY:-}" \
+            --arg openrouter_base_url "${OPENROUTER_BASE_URL:-}" \
+            --arg openrouter_model "${OPENROUTER_MODEL:-}" \
             '{
               ImageRepository: {
                 ImageIdentifier: $img,
@@ -143,7 +149,10 @@ jobs:
                   RuntimeEnvironmentVariables: {
                     OPENAI_API_KEY: $openai,
                     ALEX_API_KEY: $alexk,
-                    ALEX_API_ENDPOINT: $alexe
+                    ALEX_API_ENDPOINT: $alexe,
+                    OPENROUTER_API_KEY: $openrouter_api_key,
+                    OPENROUTER_BASE_URL: $openrouter_base_url,
+                    OPENROUTER_MODEL: $openrouter_model
                   }
                 },
                 ImageRepositoryType: "ECR"

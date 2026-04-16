@@ -2,15 +2,12 @@
 Retirement Specialist Agent - provides retirement planning analysis and projections.
 """
 
-import os
-import json
 import logging
 import random
-from typing import Dict, Any
-from datetime import datetime
+from typing import Any, Dict
 
 # No tools needed - simplified agent
-from agents.extensions.models.litellm_model import LitellmModel
+from lll_model import model
 
 logger = logging.getLogger()
 
@@ -60,8 +57,12 @@ def calculate_asset_allocation(portfolio_data: Dict[str, Any]) -> Dict[str, floa
             if asset_allocation:
                 total_equity += value * asset_allocation.get("equity", 0) / 100
                 total_bonds += value * asset_allocation.get("fixed_income", 0) / 100
-                total_real_estate += value * asset_allocation.get("real_estate", 0) / 100
-                total_commodities += value * asset_allocation.get("commodities", 0) / 100
+                total_real_estate += (
+                    value * asset_allocation.get("real_estate", 0) / 100
+                )
+                total_commodities += (
+                    value * asset_allocation.get("commodities", 0) / 100
+                )
 
     if total_value == 0:
         return {"equity": 0, "bonds": 0, "real_estate": 0, "commodities": 0, "cash": 0}
@@ -103,7 +104,9 @@ def run_monte_carlo_simulation(
         for _ in range(years_until_retirement):
             equity_return = random.gauss(equity_return_mean, equity_return_std)
             bond_return = random.gauss(bond_return_mean, bond_return_std)
-            real_estate_return = random.gauss(real_estate_return_mean, real_estate_return_std)
+            real_estate_return = random.gauss(
+                real_estate_return_mean, real_estate_return_std
+            )
 
             portfolio_return = (
                 asset_allocation["equity"] * equity_return
@@ -129,7 +132,9 @@ def run_monte_carlo_simulation(
 
             equity_return = random.gauss(equity_return_mean, equity_return_std)
             bond_return = random.gauss(bond_return_mean, bond_return_std)
-            real_estate_return = random.gauss(real_estate_return_mean, real_estate_return_std)
+            real_estate_return = random.gauss(
+                real_estate_return_mean, real_estate_return_std
+            )
 
             portfolio_return = (
                 asset_allocation["equity"] * equity_return
@@ -138,7 +143,9 @@ def run_monte_carlo_simulation(
                 + asset_allocation["cash"] * 0.02
             )
 
-            portfolio_value = portfolio_value * (1 + portfolio_return) - annual_withdrawal
+            portfolio_value = (
+                portfolio_value * (1 + portfolio_return) - annual_withdrawal
+            )
 
             if portfolio_value > 0:
                 years_income_lasted += 1
@@ -213,7 +220,9 @@ def generate_projections(
             annual_income = portfolio_value * withdrawal_rate
             years_in_retirement = min(5, year - years_until_retirement)
             for _ in range(years_in_retirement):
-                portfolio_value = portfolio_value * (1 + expected_return) - annual_income
+                portfolio_value = (
+                    portfolio_value * (1 + expected_return) - annual_income
+                )
             phase = "retirement"
 
         if portfolio_value > 0:
@@ -234,17 +243,12 @@ def generate_projections(
 
 
 def create_agent(
-    job_id: str, portfolio_data: Dict[str, Any], user_preferences: Dict[str, Any], db=None
+    job_id: str,
+    portfolio_data: Dict[str, Any],
+    user_preferences: Dict[str, Any],
+    db=None,
 ):
     """Create the retirement agent with tools and context."""
-
-    # Get model configuration
-    model_id = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-3-7-sonnet-20250219-v1:0")
-    # Set region for LiteLLM Bedrock calls
-    bedrock_region = os.getenv("BEDROCK_REGION", "us-west-2")
-    os.environ["AWS_REGION_NAME"] = bedrock_region
-
-    model = LitellmModel(model=f"bedrock/{model_id}")
 
     # Extract user preferences
     years_until_retirement = user_preferences.get("years_until_retirement", 30)
@@ -257,7 +261,11 @@ def create_agent(
 
     # Run Monte Carlo simulation
     monte_carlo = run_monte_carlo_simulation(
-        portfolio_value, years_until_retirement, target_income, allocation, num_simulations=500
+        portfolio_value,
+        years_until_retirement,
+        target_income,
+        allocation,
+        num_simulations=500,
     )
 
     # Generate projections
