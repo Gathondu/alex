@@ -1,0 +1,213 @@
+# Manual deploy: build backend/researcher Docker image, push to ECR, update App Runner.
+# Parity with backend/researcher/deploy.py (Docker build/tag/push + apprunner update-service + wait loop).
+#
+# --- Repository Variables (Settings → Actions → Variables) ---
+#   DEFAULT_AWS_REGION   Same as deploy.py / .env (e.g. us-east-1).
+#
+# --- Repository Secrets (Settings → Actions → Secrets) ---
+# AWS:
+#     AWS_ACCESS_KEY_ID
+#     AWS_SECRET_ACCESS_KEY
+# App Runner runtime env (same names as deploy.py):
+#     OPENAI_API_KEY
+#     ALEX_API_KEY
+#     ALEX_API_ENDPOINT
+#
+# --- IAM permissions for the IAM user (access keys) ---
+#   sts:GetCallerIdentity (optional)
+#   ecr:GetAuthorizationToken; ECR push to repository "alex-researcher"
+#   apprunner:ListServices, DescribeService, UpdateService, ListOperations (service alex-researcher)
+#
+# ECR URL is resolved via: aws ecr describe-repositories --repository-names alex-researcher
+# (equivalent to terraform output ecr_repository_url in terraform/4_researcher when infra exists).
+
+name: Researcher deploy to ECR (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: researcher-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.DEFAULT_AWS_REGION }}
+
+      - name: Show AWS identity
+        env:
+          DEFAULT_AWS_REGION: ${{ vars.DEFAULT_AWS_REGION }}
+        run: aws sts get-caller-identity --region "$DEFAULT_AWS_REGION"
+
+      - name: Resolve ECR repository URL
+        id: ecr
+        env:
+          DEFAULT_AWS_REGION: ${{ vars.DEFAULT_AWS_REGION }}
+        run: |
+          set -euo pipefail
+          ECR_URL=$(aws ecr describe-repositories \
+            --repository-names alex-researcher \
+            --region "$DEFAULT_AWS_REGION" \
+            --query 'repositories[0].repositoryUri' \
+            --output text)
+          echo "ecr_url=$ECR_URL" >> "$GITHUB_OUTPUT"
+          echo "ECR repository URL: $ECR_URL"
+
+      - name: Log in to ECR
+        env:
+          DEFAULT_AWS_REGION: ${{ vars.DEFAULT_AWS_REGION }}
+          ECR_URL: ${{ steps.ecr.outputs.ecr_url }}
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "$DEFAULT_AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_URL"
+
+      - name: Build and push Docker image
+        working-directory: backend/researcher
+        env:
+          ECR_URL: ${{ steps.ecr.outputs.ecr_url }}
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="deploy-$(date +%s)"
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "Building alex-researcher:${IMAGE_TAG} (linux/amd64)"
+          docker build --platform linux/amd64 -t "alex-researcher:${IMAGE_TAG}" .
+          docker tag "alex-researcher:${IMAGE_TAG}" "${ECR_URL}:${IMAGE_TAG}"
+          docker tag "alex-researcher:${IMAGE_TAG}" "${ECR_URL}:latest"
+          docker push "${ECR_URL}:${IMAGE_TAG}"
+          docker push "${ECR_URL}:latest"
+          echo "Pushed ${ECR_URL}:${IMAGE_TAG} and ${ECR_URL}:latest"
+
+      # update-service JSON matches deploy.py json.dumps (lines 184–203):
+      # ImageRepository.ImageIdentifier, Port "8000", RuntimeEnvironmentVariables (3 keys),
+      # ImageRepositoryType ECR, AuthenticationConfiguration.AccessRoleArn, AutoDeploymentsEnabled false.
+      - name: Update App Runner service and wait for RUNNING
+        env:
+          DEFAULT_AWS_REGION: ${{ vars.DEFAULT_AWS_REGION }}
+          ECR_URL: ${{ steps.ecr.outputs.ecr_url }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ALEX_API_KEY: ${{ secrets.ALEX_API_KEY }}
+          ALEX_API_ENDPOINT: ${{ secrets.ALEX_API_ENDPOINT }}
+        run: |
+          set -euo pipefail
+
+          SERVICES_JSON=$(aws apprunner list-services \
+            --region "$DEFAULT_AWS_REGION" \
+            --query "ServiceSummaryList[?ServiceName=='alex-researcher'].ServiceArn" \
+            --output json)
+
+          SERVICE_ARN=$(echo "$SERVICES_JSON" | jq -r '.[0] // empty')
+          if [ -z "$SERVICE_ARN" ] || [ "$SERVICE_ARN" = "null" ]; then
+            echo "App Runner service 'alex-researcher' not found. Push to ECR succeeded; apply terraform/4_researcher or create the service in AWS Console."
+            exit 0
+          fi
+
+          echo "Found service: $SERVICE_ARN"
+
+          ACCESS_ROLE_ARN=$(aws apprunner describe-service \
+            --service-arn "$SERVICE_ARN" \
+            --region "$DEFAULT_AWS_REGION" \
+            --query 'Service.SourceConfiguration.AuthenticationConfiguration.AccessRoleArn' \
+            --output text)
+          ACCESS_ROLE_ARN=$(echo "$ACCESS_ROLE_ARN" | tr -d '\r\n')
+
+          echo "Updating service to image ${ECR_URL}:${IMAGE_TAG}"
+
+          SOURCE_CONFIG=$(jq -n \
+            --arg img "${ECR_URL}:${IMAGE_TAG}" \
+            --arg port "8000" \
+            --arg openai "${OPENAI_API_KEY:-}" \
+            --arg alexk "${ALEX_API_KEY:-}" \
+            --arg alexe "${ALEX_API_ENDPOINT:-}" \
+            --arg role "$ACCESS_ROLE_ARN" \
+            '{
+              ImageRepository: {
+                ImageIdentifier: $img,
+                ImageConfiguration: {
+                  Port: $port,
+                  RuntimeEnvironmentVariables: {
+                    OPENAI_API_KEY: $openai,
+                    ALEX_API_KEY: $alexk,
+                    ALEX_API_ENDPOINT: $alexe
+                  }
+                },
+                ImageRepositoryType: "ECR"
+              },
+              AuthenticationConfiguration: { AccessRoleArn: $role },
+              AutoDeploymentsEnabled: false
+            }')
+
+          aws apprunner update-service \
+            --service-arn "$SERVICE_ARN" \
+            --region "$DEFAULT_AWS_REGION" \
+            --source-configuration "$SOURCE_CONFIG"
+
+          echo "Service update requested. Waiting for deployment (up to ~10 minutes)..."
+
+          max_attempts=120
+          attempts=0
+          while [ "$attempts" -lt $max_attempts ]; do
+            status=$(aws apprunner describe-service \
+              --service-arn "$SERVICE_ARN" \
+              --region "$DEFAULT_AWS_REGION" \
+              --query 'Service.Status' \
+              --output text)
+            status=$(echo "$status" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+            if [ "$status" = "RUNNING" ]; then
+              echo "Deployment complete. Service is RUNNING."
+              service_url=$(aws apprunner describe-service \
+                --service-arn "$SERVICE_ARN" \
+                --region "$DEFAULT_AWS_REGION" \
+                --query 'Service.ServiceUrl' \
+                --output text)
+              service_url=$(echo "$service_url" | tr -d '\r\n')
+              echo "Service URL: https://${service_url}"
+              echo "curl https://${service_url}/health"
+              exit 0
+            elif [ "$status" = "OPERATION_IN_PROGRESS" ]; then
+              operation_status=$(aws apprunner list-operations \
+                --service-arn "$SERVICE_ARN" \
+                --region "$DEFAULT_AWS_REGION" \
+                --query 'OperationSummaryList[0].Status' \
+                --output text)
+              operation_status=$(echo "$operation_status" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+              if [ "$operation_status" = "SUCCEEDED" ]; then
+                echo "Operation succeeded, rechecking service status..."
+                sleep 2
+                continue
+              elif [ "$operation_status" = "FAILED" ]; then
+                echo "Deployment failed. Check the AWS Console for details."
+                exit 0
+              else
+                printf '.'
+                if [ "$attempts" -gt 0 ] && [ $((attempts % 6)) -eq 0 ]; then
+                  elapsed_minutes=$(awk "BEGIN { printf \"%.1f\", ($attempts * 5) / 60 }")
+                  echo " (${elapsed_minutes} minutes elapsed)"
+                fi
+                sleep 5
+                attempts=$((attempts + 1))
+              fi
+            else
+              echo "Unexpected status: ${status}. Check the AWS Console."
+              exit 0
+            fi
+          done
+
+          echo "Deployment is taking longer than expected. Check the AWS Console."
+          exit 0
