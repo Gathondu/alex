@@ -15,7 +15,9 @@ def get_model():
     base_url: str | None = os.getenv(
         "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
     )
-    model: str | None = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free")
+    model: str | None = os.getenv(
+        "OPENROUTER_MODEL", "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    )
     if not api_key:
         logger.error("OPENROUTER_API_KEY must be set")
         return None
