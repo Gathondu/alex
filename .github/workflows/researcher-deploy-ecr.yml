@@ -1,17 +1,18 @@
 # Manual deploy: build backend/researcher Docker image, push to ECR, update App Runner.
-# Parity with backend/researcher/deploy.py (Docker build/tag/push + apprunner update-service + wait loop).
+# - Docker build/tag/push + apprunner update-service + wait loop follow backend/researcher/deploy.py.
+# - App Runner RuntimeEnvironmentVariables match terraform/4_researcher/main.tf (six keys), not deploy.py
+#   (deploy.py only passes OPENAI_API_KEY, ALEX_API_KEY, ALEX_API_ENDPOINT).
 #
-# --- Repository Variables (Settings → Actions → Variables) ---
-#   DEFAULT_AWS_REGION   Same as deploy.py / .env (e.g. us-east-1).
-#
-# --- Repository Secrets (Settings → Actions → Secrets) ---
-# AWS:
-#     AWS_ACCESS_KEY_ID
-#     AWS_SECRET_ACCESS_KEY
-# App Runner runtime env (same names as deploy.py):
-#     OPENAI_API_KEY
-#     ALEX_API_KEY
-#     ALEX_API_ENDPOINT
+# --- Configuration checklist (repo Settings → Secrets and variables → Actions) ---
+# Variables:
+#   DEFAULT_AWS_REGION     Required (e.g. us-east-1).
+#   OPENROUTER_BASE_URL    Optional if empty is OK for your app (e.g. https://openrouter.ai/api/v1).
+#   OPENROUTER_MODEL       Optional if empty is OK (e.g. openai/gpt-oss-20b:free).
+# Secrets:
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   Required for AWS CLI in this workflow.
+#   OPENAI_API_KEY / ALEX_API_KEY / ALEX_API_ENDPOINT / OPENROUTER_API_KEY   App Runner runtime;
+#     unset secrets become empty strings in App Runner.
+# OPENROUTER_BASE_URL and OPENROUTER_MODEL use Variables (visible to repo collaborators); use Secrets instead if sensitive.
 #
 # --- IAM permissions for the IAM user (access keys) ---
 #   sts:GetCallerIdentity (optional)
@@ -99,13 +100,20 @@ jobs:
           docker push "${ECR_URL}:latest"
           echo "Pushed ${ECR_URL}:${IMAGE_TAG} and ${ECR_URL}:latest"
 
-      # update-service JSON matches deploy.py json.dumps (lines 184–203):
-      # ImageRepository.ImageIdentifier, Port "8000", RuntimeEnvironmentVariables (3 keys),
-      # ImageRepositoryType ECR, AuthenticationConfiguration.AccessRoleArn, AutoDeploymentsEnabled false.
+      # update-service payload: same shape as deploy.py; RuntimeEnvironmentVariables match Terraform
+      # (terraform/4_researcher image_configuration.runtime_environment_variables — six keys).
+      # ImageRepository: ImageIdentifier, Port "8000", ImageRepositoryType ECR;
+      # AuthenticationConfiguration.AccessRoleArn; AutoDeploymentsEnabled false.
       - name: Update App Runner service and wait for RUNNING
         env:
           DEFAULT_AWS_REGION: ${{ vars.DEFAULT_AWS_REGION }}
           ECR_URL: ${{ steps.ecr.outputs.ecr_url }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ALEX_API_KEY: ${{ secrets.ALEX_API_KEY }}
+          ALEX_API_ENDPOINT: ${{ secrets.ALEX_API_ENDPOINT }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_BASE_URL: ${{ vars.OPENROUTER_BASE_URL }}
+          OPENROUTER_MODEL: ${{ vars.OPENROUTER_MODEL }}
         run: |
           set -euo pipefail
 
