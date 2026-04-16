@@ -37,6 +37,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ALEX_API_KEY: ${{ secrets.ALEX_API_KEY }}
+      ALEX_API_ENDPOINT: ${{ secrets.ALEX_API_ENDPOINT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -99,9 +103,6 @@ jobs:
         env:
           DEFAULT_AWS_REGION: ${{ vars.DEFAULT_AWS_REGION }}
           ECR_URL: ${{ steps.ecr.outputs.ecr_url }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ALEX_API_KEY: ${{ secrets.ALEX_API_KEY }}
-          ALEX_API_ENDPOINT: ${{ secrets.ALEX_API_ENDPOINT }}
         run: |
           set -euo pipefail
 
