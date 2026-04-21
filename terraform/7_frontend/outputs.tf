@@ -18,6 +18,21 @@ output "lambda_function_name" {
   value       = aws_lambda_function.api.function_name
 }
 
+output "api_lambda_packages_bucket_name" {
+  description = "S3 bucket for API Lambda zip + base64sha256 artifact (when api_lambda_package_source = s3). Set GitHub Actions var PART7_LAMBDA_PACKAGE_BUCKET to this value."
+  value       = var.api_lambda_package_source == "s3" ? aws_s3_bucket.api_lambda_packages[0].id : null
+}
+
+output "api_lambda_s3_zip_key" {
+  description = "S3 object key for the deployment zip"
+  value       = var.api_lambda_package_source == "s3" ? var.api_lambda_s3_zip_key : null
+}
+
+output "api_lambda_s3_hash_key" {
+  description = "S3 object key for the source_code_hash sidecar file"
+  value       = var.api_lambda_package_source == "s3" ? var.api_lambda_s3_hash_key : null
+}
+
 output "setup_instructions" {
   description = "Instructions for completing the deployment"
   value = <<-EOT

@@ -1,0 +1,178 @@
+# Part 7 application deploy (no Terraform in CI).
+#
+# API Lambda (Docker packaging, no local Docker):
+#   uv run package_docker.py -> uploads api_lambda.zip + *.base64sha256 to S3.
+#   You then run `terraform apply` locally in terraform/7_frontend to publish the new code to Lambda.
+#
+# Frontend (if enabled): npm run build -> scripts/ci_part7_upload_static.py (S3 + CloudFront).
+#
+# --- GitHub Actions: Secrets ---
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+#   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+#   CLERK_SECRET_KEY
+#
+# --- GitHub Actions: Variables ---
+#   DEFAULT_AWS_REGION
+#   PART7_LAMBDA_PACKAGE_BUCKET        From `terraform output api_lambda_packages_bucket_name` (after first apply with api_lambda_package_source = s3)
+#   PART7_LAMBDA_S3_ZIP_KEY            Optional; default deployments/api_lambda.zip (match terraform var api_lambda_s3_zip_key)
+#   PART7_LAMBDA_S3_HASH_KEY          Optional; default deployments/api_lambda.base64sha256 (match api_lambda_s3_hash_key)
+#   PART7_S3_BUCKET                     Frontend static site bucket (s3_bucket_name)
+#   PART7_CLOUDFRONT_ID
+#   PART7_API_GATEWAY_URL               NEXT_PUBLIC_API_URL for the build
+#
+# First-time S3 path (see terraform/7_frontend/terraform.tfvars.example):
+#   terraform apply -target=aws_s3_bucket.api_lambda_packages -target=aws_s3_bucket_public_access_block.api_lambda_packages -target=aws_s3_bucket_server_side_encryption_configuration.api_lambda_packages -target=aws_s3_bucket_policy.api_lambda_packages
+#   Set PART7_LAMBDA_PACKAGE_BUCKET in GitHub, run this workflow, then terraform apply.
+#
+# --- IAM ---
+#   s3:PutObject/GetObject on the api lambda packages bucket prefix; Lambda/CloudFront/S3 permissions as before for frontend steps.
+
+name: Part 7 app deploy (Lambda + frontend)
+
+on:
+  workflow_call:
+    inputs:
+      package_api:
+        description: Run Docker packaging and upload API Lambda zip + hash to S3 (then apply Terraform locally)
+        type: boolean
+        required: false
+        default: true
+      build_frontend:
+        description: npm run build and upload static site to S3 + invalidate CloudFront
+        type: boolean
+        required: false
+        default: true
+  workflow_dispatch:
+    inputs:
+      package_api:
+        description: Package API Lambda with Docker and upload artifacts to S3
+        type: boolean
+        default: true
+      build_frontend:
+        description: Build Next.js and upload to S3 + invalidate CloudFront
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: part7-app-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve deploy flags
+        id: flags
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_call" ]; then
+            PKG='${{ inputs.package_api }}'
+            FE='${{ inputs.build_frontend }}'
+          else
+            PKG='${{ github.event.inputs.package_api }}'
+            FE='${{ github.event.inputs.build_frontend }}'
+          fi
+          echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
+          echo "fe=$FE" >> "$GITHUB_OUTPUT"
+          if [ "$PKG" != "true" ] && [ "$FE" != "true" ]; then
+            echo "Nothing to deploy: both package_api and build_frontend are false." >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.DEFAULT_AWS_REGION }}
+
+      - name: Show AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Set up Python
+        if: steps.flags.outputs.pkg == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        if: steps.flags.outputs.pkg == 'true'
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Install backend dependencies (API packaging)
+        if: steps.flags.outputs.pkg == 'true'
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          uv sync
+
+      - name: Package API Lambda (Docker)
+        if: steps.flags.outputs.pkg == 'true'
+        working-directory: backend/api
+        run: |
+          set -euo pipefail
+          uv run package_docker.py
+
+      - name: Upload API Lambda package to S3 (then run terraform apply locally)
+        if: steps.flags.outputs.pkg == 'true'
+        env:
+          BUCKET: ${{ vars.PART7_LAMBDA_PACKAGE_BUCKET }}
+          ZIP_KEY: ${{ vars.PART7_LAMBDA_S3_ZIP_KEY }}
+          HASH_KEY: ${{ vars.PART7_LAMBDA_S3_HASH_KEY }}
+          AWS_REGION: ${{ vars.DEFAULT_AWS_REGION }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUCKET}" ]; then
+            echo "Set GitHub variable PART7_LAMBDA_PACKAGE_BUCKET (terraform output api_lambda_packages_bucket_name)." >&2
+            exit 1
+          fi
+          ZIP_KEY="${ZIP_KEY:-deployments/api_lambda.zip}"
+          HASH_KEY="${HASH_KEY:-deployments/api_lambda.base64sha256}"
+          openssl dgst -sha256 -binary backend/api/api_lambda.zip | base64 -w0 > /tmp/api_lambda.base64sha256
+          aws s3 cp /tmp/api_lambda.base64sha256 "s3://${BUCKET}/${HASH_KEY}" --region "${AWS_REGION}"
+          aws s3 cp backend/api/api_lambda.zip "s3://${BUCKET}/${ZIP_KEY}" --region "${AWS_REGION}"
+          echo "Uploaded s3://${BUCKET}/${ZIP_KEY} and hash sidecar."
+          echo "Next: cd terraform/7_frontend && terraform apply"
+
+      - name: Set up Node
+        if: steps.flags.outputs.fe == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        if: steps.flags.outputs.fe == 'true'
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend (production)
+        if: steps.flags.outputs.fe == 'true'
+        working-directory: frontend
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_API_URL: ${{ vars.PART7_API_GATEWAY_URL }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL: /dashboard
+          NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL: /dashboard
+        run: npm run build
+
+      - name: Upload static site and invalidate CloudFront
+        if: steps.flags.outputs.fe == 'true'
+        env:
+          PART7_S3_BUCKET: ${{ vars.PART7_S3_BUCKET }}
+          PART7_CLOUDFRONT_ID: ${{ vars.PART7_CLOUDFRONT_ID }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci_part7_upload_static.py

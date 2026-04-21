@@ -10,11 +10,16 @@
 #
 # --- IAM (typical for Terraform 6_agents + Lambda + S3 uploads) ---
 #   Lambda/S3/terraform permissions for your account; same credentials you use for local terraform apply.
+#
+# When run via deploy-orchestrator or workflow_call: terraform apply requires local state. GitHub-hosted
+# runners do not have terraform.tfstate (it is gitignored). Use workflow_dispatch from a machine with state,
+# migrate to remote state, or use a self-hosted runner until then.
 
 name: Agents deploy Lambda packages (manual)
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

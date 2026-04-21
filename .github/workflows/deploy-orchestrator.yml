@@ -1,0 +1,97 @@
+# Orchestrated deploys on push to main (path-filtered) or manual deploy.
+# See comments in researcher-deploy-ecr.yml, agents-deploy-lambdas.yml (Terraform state caveat), part7-app-deploy.yml.
+
+name: Deploy orchestrator
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      force_all:
+        description: Run researcher ECR, agents Lambdas, and Part 7 app deploy (ignore path filters)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-orchestrator
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      researcher_docker: ${{ steps.combine.outputs.researcher_docker }}
+      agents_docker: ${{ steps.combine.outputs.agents_docker }}
+      part7_api_docker: ${{ steps.combine.outputs.part7_api_docker }}
+      part7_static: ${{ steps.combine.outputs.part7_static }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Skip path detection when force_all — all downstream filters are set true in Combine.
+      - name: Path filters
+        id: filter
+        if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.force_all == 'true') }}
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            researcher_docker:
+              - 'backend/researcher/**'
+              - 'backend/lll_model.py'
+            agents_docker:
+              - 'backend/planner/**'
+              - 'backend/tagger/**'
+              - 'backend/reporter/**'
+              - 'backend/charter/**'
+              - 'backend/retirement/**'
+              - 'backend/package_docker.py'
+            part7_api_docker:
+              - 'backend/api/**'
+            part7_static:
+              - 'frontend/**'
+              - 'scripts/deploy.py'
+              - 'scripts/ci_part7_upload_static.py'
+
+      - name: Combine filter outputs
+        id: combine
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force_all }}" = "true" ]; then
+            echo "researcher_docker=true" >> "$GITHUB_OUTPUT"
+            echo "agents_docker=true" >> "$GITHUB_OUTPUT"
+            echo "part7_api_docker=true" >> "$GITHUB_OUTPUT"
+            echo "part7_static=true" >> "$GITHUB_OUTPUT"
+            echo "Mode: force_all"
+          else
+            echo "researcher_docker=${{ steps.filter.outputs.researcher_docker }}" >> "$GITHUB_OUTPUT"
+            echo "agents_docker=${{ steps.filter.outputs.agents_docker }}" >> "$GITHUB_OUTPUT"
+            echo "part7_api_docker=${{ steps.filter.outputs.part7_api_docker }}" >> "$GITHUB_OUTPUT"
+            echo "part7_static=${{ steps.filter.outputs.part7_static }}" >> "$GITHUB_OUTPUT"
+            echo "Mode: path filters"
+          fi
+
+  researcher:
+    needs: detect
+    if: needs.detect.outputs.researcher_docker == 'true'
+    uses: ./.github/workflows/researcher-deploy-ecr.yml
+    secrets: inherit
+
+  agents:
+    needs: detect
+    if: needs.detect.outputs.agents_docker == 'true'
+    uses: ./.github/workflows/agents-deploy-lambdas.yml
+    secrets: inherit
+
+  part7:
+    needs: detect
+    if: needs.detect.outputs.part7_api_docker == 'true' || needs.detect.outputs.part7_static == 'true'
+    uses: ./.github/workflows/part7-app-deploy.yml
+    with:
+      package_api: ${{ needs.detect.outputs.part7_api_docker == 'true' }}
+      build_frontend: ${{ needs.detect.outputs.part7_static == 'true' }}
+    secrets: inherit

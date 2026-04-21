@@ -43,6 +43,88 @@ locals {
     Part        = "7_frontend"
     ManagedBy   = "terraform"
   }
+
+  api_lambda_zip_local_path = "${path.module}/../../backend/api/api_lambda.zip"
+}
+
+# Private bucket for API Lambda deployment zips (GitHub Actions uploads; local terraform apply reads via S3)
+resource "aws_s3_bucket" "api_lambda_packages" {
+  count  = var.api_lambda_package_source == "s3" ? 1 : 0
+  bucket = "${local.name_prefix}-api-lambda-packages-${data.aws_caller_identity.current.account_id}"
+  tags   = local.common_tags
+}
+
+resource "aws_s3_bucket_public_access_block" "api_lambda_packages" {
+  count  = var.api_lambda_package_source == "s3" ? 1 : 0
+  bucket = aws_s3_bucket.api_lambda_packages[0].id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "api_lambda_packages" {
+  count  = var.api_lambda_package_source == "s3" ? 1 : 0
+  bucket = aws_s3_bucket.api_lambda_packages[0].id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# CI uploads hash file next to zip; Terraform reads the base64 sha256 for source_code_hash
+data "aws_s3_object" "api_lambda_b64sha" {
+  count  = var.api_lambda_package_source == "s3" ? 1 : 0
+  bucket = aws_s3_bucket.api_lambda_packages[0].id
+  key    = var.api_lambda_s3_hash_key
+
+  # Ensure bucket policy allows reads before Terraform / Lambda use the object
+  depends_on = [aws_s3_bucket_policy.api_lambda_packages[0]]
+}
+
+resource "aws_s3_bucket_policy" "api_lambda_packages" {
+  count  = var.api_lambda_package_source == "s3" ? 1 : 0
+  bucket = aws_s3_bucket.api_lambda_packages[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowLambdaGetDeploymentPackage"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.api_lambda_packages[0].arn}/${var.api_lambda_s3_zip_key}"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      },
+      {
+        Sid    = "AllowAccountDeployArtifacts"
+        Effect = "Allow"
+        Principal = {
+          AWS = data.aws_caller_identity.current.arn
+        }
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.api_lambda_packages[0].arn,
+          "${aws_s3_bucket.api_lambda_packages[0].arn}/*"
+        ]
+      }
+    ]
+  })
 }
 
 # S3 bucket for frontend static website
@@ -190,17 +272,24 @@ resource "aws_iam_role_policy" "api_lambda_invoke" {
 }
 
 # Lambda function for API
+# - local: build api_lambda.zip with Docker locally (uv run package_docker.py in backend/api)
+# - s3: GitHub Actions uploads zip + *.base64sha256; run terraform apply locally (no Docker)
 resource "aws_lambda_function" "api" {
-  filename         = "${path.module}/../../backend/api/api_lambda.zip"
-  function_name    = "${local.name_prefix}-api"
-  role             = aws_iam_role.api_lambda_role.arn
-  handler          = "lambda_handler.handler"
-  source_code_hash = filebase64sha256("${path.module}/../../backend/api/api_lambda.zip")
-  runtime          = "python3.12"
-  architectures    = ["x86_64"]
-  timeout          = 30
-  memory_size      = 512
-  tags             = local.common_tags
+  function_name = "${local.name_prefix}-api"
+  role            = aws_iam_role.api_lambda_role.arn
+  handler         = "lambda_handler.handler"
+
+  filename         = var.api_lambda_package_source == "local" ? local.api_lambda_zip_local_path : null
+  source_code_hash = var.api_lambda_package_source == "local" ? filebase64sha256(local.api_lambda_zip_local_path) : trimspace(data.aws_s3_object.api_lambda_b64sha[0].body)
+
+  s3_bucket = var.api_lambda_package_source == "s3" ? aws_s3_bucket.api_lambda_packages[0].id : null
+  s3_key    = var.api_lambda_package_source == "s3" ? var.api_lambda_s3_zip_key : null
+
+  runtime       = "python3.12"
+  architectures = ["x86_64"]
+  timeout       = 30
+  memory_size   = 512
+  tags          = local.common_tags
 
   environment {
     variables = {
@@ -222,7 +311,6 @@ resource "aws_lambda_function" "api" {
     }
   }
 
-  # Ensure Lambda waits for dependencies including CloudFront
   depends_on = [
     aws_iam_role_policy.api_lambda_aurora,
     aws_iam_role_policy.api_lambda_sqs,

@@ -24,8 +24,10 @@
 
 name: Researcher deploy to ECR (manual)
 
+# Also callable from deploy-orchestrator.yml (path-filtered).
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

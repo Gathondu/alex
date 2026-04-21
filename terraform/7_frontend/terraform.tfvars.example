@@ -9,3 +9,9 @@ aws_region = "us-east-1"
 # The issuer is: https://[your-instance].clerk.accounts.dev
 clerk_jwks_url = "https://engaging-feline-80.clerk.accounts.dev/.well-known/jwks.json"
 clerk_issuer   = "https://engaging-feline-80.clerk.accounts.dev"
+
+# API Lambda package: use "s3" when CI builds the zip (GitHub Actions) and you run terraform apply locally (no Docker).
+# Use "local" when you can run `uv run package_docker.py` in backend/api before terraform apply.
+# First-time S3 workflow: terraform apply -target="aws_s3_bucket.api_lambda_packages" -target="aws_s3_bucket_public_access_block.api_lambda_packages" -target="aws_s3_bucket_server_side_encryption_configuration.api_lambda_packages" -target="aws_s3_bucket_policy.api_lambda_packages"
+# Then upload artifacts from GitHub Actions, then terraform apply.
+api_lambda_package_source = "s3"
