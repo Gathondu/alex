@@ -79,6 +79,12 @@ def package_lambda():
         shutil.copy(planner_dir / "market.py", package_dir)
         shutil.copy(planner_dir / "prices.py", package_dir)
         shutil.copy(planner_dir / "observability.py", package_dir)
+
+        lll_model = backend_dir / "lll_model.py"
+        if not lll_model.is_file():
+            print(f"Error: Required file not found: {lll_model}")
+            sys.exit(1)
+        shutil.copy(lll_model, package_dir)
         
         # Create the zip file
         zip_path = planner_dir / "planner_lambda.zip"

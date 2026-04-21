@@ -187,6 +187,9 @@ def main():
             print()
             print(f"❌ Failed to package: {', '.join(failed_packages)}")
             print("   Make sure Docker is running and package_docker.py exists")
+            if os.environ.get("CI"):
+                print("   CI environment: exiting (non-interactive).")
+                sys.exit(1)
             response = input("Continue anyway? (y/N): ")
             if response.lower() != 'y':
                 sys.exit(1)

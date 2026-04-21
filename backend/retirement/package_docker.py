@@ -73,6 +73,12 @@ def package_lambda():
         shutil.copy(retirement_dir / "agent.py", package_dir)
         shutil.copy(retirement_dir / "templates.py", package_dir)
         shutil.copy(retirement_dir / "observability.py", package_dir)
+
+        lll_model = backend_dir / "lll_model.py"
+        if not lll_model.is_file():
+            print(f"Error: Required file not found: {lll_model}")
+            sys.exit(1)
+        shutil.copy(lll_model, package_dir)
         
         # Create the zip file
         zip_path = retirement_dir / "retirement_lambda.zip"

@@ -1,0 +1,112 @@
+# Manual deploy: package all Part 6 agent Lambdas (Docker + zip), then Terraform apply in terraform/6_agents.
+#
+# --- Configuration (repo Settings → Secrets and variables → Actions) ---
+# Align OpenRouter with researcher-deploy-ecr.yml where possible:
+#   Secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, OPENROUTER_API_KEY, POLYGON_API_KEY
+#   Variables: DEFAULT_AWS_REGION, OPENROUTER_BASE_URL, OPENROUTER_MODEL,
+#     AURORA_CLUSTER_ARN, AURORA_SECRET_ARN, VECTOR_BUCKET
+#   Optional variables: POLYGON_PLAN (default free), SAGEMAKER_ENDPOINT, LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY
+#   Optional secrets: OPENAI_API_KEY (tracing), LANGFUSE_SECRET_KEY
+#
+# --- IAM (typical for Terraform 6_agents + Lambda + S3 uploads) ---
+#   Lambda/S3/terraform permissions for your account; same credentials you use for local terraform apply.
+
+name: Agents deploy Lambda packages (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agents-lambda-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CI: "true"
+      TF_VAR_aws_region: ${{ vars.DEFAULT_AWS_REGION }}
+      TF_VAR_aurora_cluster_arn: ${{ vars.AURORA_CLUSTER_ARN }}
+      TF_VAR_aurora_secret_arn: ${{ secrets.AURORA_SECRET_ARN }}
+      TF_VAR_vector_bucket: ${{ vars.VECTOR_BUCKET }}
+      TF_VAR_openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+      TF_VAR_openrouter_base_url: ${{ vars.OPENROUTER_BASE_URL }}
+      TF_VAR_openrouter_model: ${{ vars.OPENROUTER_MODEL }}
+      TF_VAR_polygon_api_key: ${{ secrets.POLYGON_API_KEY }}
+      TF_VAR_polygon_plan: ${{ vars.POLYGON_PLAN || 'free' }}
+      TF_VAR_sagemaker_endpoint: ${{ vars.SAGEMAKER_ENDPOINT || 'alex-embedding-endpoint' }}
+      TF_VAR_langfuse_public_key: ${{ vars.LANGFUSE_PUBLIC_KEY }}
+      TF_VAR_langfuse_secret_key: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      TF_VAR_langfuse_host: ${{ vars.LANGFUSE_HOST || 'https://us.cloud.langfuse.com' }}
+      TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.DEFAULT_AWS_REGION }}
+
+      - name: Show AWS identity
+        env:
+          DEFAULT_AWS_REGION: ${{ vars.DEFAULT_AWS_REGION }}
+        run: aws sts get-caller-identity --region "$DEFAULT_AWS_REGION"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Install backend dependencies (deploy script)
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          uv sync
+
+      - name: Package all agent Lambdas
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          uv run package_docker.py
+
+      - name: Verify Lambda zip artifacts
+        run: |
+          set -euo pipefail
+          for name in planner tagger reporter charter retirement; do
+            zip="backend/${name}/${name}_lambda.zip"
+            if [[ ! -f "$zip" ]]; then
+              echo "Missing: $zip"
+              exit 1
+            fi
+            ls -la "$zip"
+          done
+
+      - name: Terraform init (6_agents)
+        working-directory: terraform/6_agents
+        run: |
+          set -euo pipefail
+          terraform init -input=false
+
+      - name: Deploy Lambdas via Terraform
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          uv run deploy_all_lambdas.py
