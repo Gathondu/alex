@@ -18,14 +18,22 @@ variable "vector_bucket" {
   type        = string
 }
 
-variable "bedrock_model_id" {
-  description = "Bedrock model ID to use for agents"
+variable "openrouter_api_key" {
+  description = "OpenRouter API key for agent model calls"
   type        = string
+  sensitive   = true
 }
 
-variable "bedrock_region" {
-  description = "AWS region for Bedrock"
+variable "openrouter_base_url" {
+  description = "OpenRouter base URL"
   type        = string
+  default     = "https://openrouter.ai/api/v1"
+}
+
+variable "openrouter_model" {
+  description = "Default OpenRouter model for agents"
+  type        = string
+  default     = "openai/gpt-4o-mini-2024-07-18"
 }
 
 variable "sagemaker_endpoint" {

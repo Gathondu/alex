@@ -53,7 +53,7 @@ output "setup_instructions" {
        - /aws/lambda/alex-charter
        - /aws/lambda/alex-retirement
     
-    Bedrock Model: ${var.bedrock_model_id}
-    Region: ${var.bedrock_region}
+    OpenRouter Base URL: ${var.openrouter_base_url}
+    OpenRouter Model: ${var.openrouter_model}
   EOT
 }

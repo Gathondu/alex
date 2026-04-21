@@ -15,13 +15,10 @@ aurora_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:alex-a
 # Format: alex-vectors-{your-aws-account-id}
 vector_bucket = "alex-vectors-123456789012"
 
-# Bedrock model configuration
-# Using Amazon Nova Pro model for better reliability
-bedrock_model_id = "us.amazon.nova-pro-v1:0"
-
-# Bedrock region (us-west-2 has the most models available)
-# Note: This can be different from your Lambda region - cross-region calls work fine
-bedrock_region = "us-west-2"
+# OpenRouter model configuration
+openrouter_api_key  = "your_openrouter_api_key_here"
+openrouter_base_url = "https://openrouter.ai/api/v1"
+openrouter_model    = "openai/gpt-4o-mini-2024-07-18"
 
 # SageMaker endpoint name from Part 2
 # Default: alex-embedding-endpoint
