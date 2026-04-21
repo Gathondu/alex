@@ -12,6 +12,12 @@ import subprocess
 import argparse
 from pathlib import Path
 
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+from lambda_docker_packaging import docker_run_host_user_args
+
+
 def run_command(cmd, cwd=None):
     """Run a command and capture output."""
     print(f"Running: {' '.join(cmd)}")
@@ -61,6 +67,7 @@ def package_lambda():
         # We still need to manually install the database package
         docker_cmd = [
             "docker", "run", "--rm",
+            *docker_run_host_user_args(),
             "--platform", "linux/amd64",
             "-v", f"{temp_path}:/build",
             "-v", f"{backend_dir}/database:/database",

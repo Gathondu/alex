@@ -11,6 +11,11 @@ import subprocess
 import argparse
 from pathlib import Path
 
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+from lambda_docker_packaging import docker_run_host_user_args
+
 
 def run_command(cmd, cwd=None):
     """Run a command and capture output."""
@@ -60,6 +65,7 @@ def package_lambda():
             "docker",
             "run",
             "--rm",
+            *docker_run_host_user_args(),
             "--platform",
             "linux/amd64",
             "-v",
