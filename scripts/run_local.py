@@ -9,10 +9,12 @@ import sys
 import subprocess
 import signal
 import time
+import socket
 from pathlib import Path
 
 # Track subprocesses for cleanup
 processes = []
+npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
 
 def cleanup(signum=None, frame=None):
     """Clean up all subprocess on exit"""
@@ -43,7 +45,7 @@ def check_requirements():
 
     # Check npm
     try:
-        result = subprocess.run(["npm", "--version"], capture_output=True, text=True)
+        result = subprocess.run([npm_cmd, "--version"], capture_output=True, text=True)
         npm_version = result.stdout.strip()
         checks.append(f"✅ npm: {npm_version}")
     except FileNotFoundError:
@@ -91,6 +93,73 @@ def check_env_files():
 
     print("✅ Environment files found")
 
+def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
+    """Check if a TCP port is currently in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex((host, port)) == 0
+
+def get_port_owner_info(port: int) -> str:
+    """Best-effort process owner lookup for an in-use port."""
+    if os.name != "nt":
+        return ""
+
+    try:
+        netstat = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        for line in netstat.stdout.splitlines():
+            line = line.strip()
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.split()
+                pid = parts[-1]
+                return f"(PID {pid})"
+    except Exception:
+        return ""
+
+    return ""
+
+def check_required_ports():
+    """Ensure required local ports are free before launching services."""
+    required_ports = {
+        8000: "FastAPI backend",
+        3000: "NextJS frontend",
+    }
+
+    conflicts = []
+    for port, service_name in required_ports.items():
+        if is_port_in_use(port):
+            owner = get_port_owner_info(port)
+            owner_suffix = f" {owner}" if owner else ""
+            conflicts.append(f"  - Port {port} is already in use{owner_suffix} ({service_name})")
+
+    if conflicts:
+        print("\n⚠️  Required ports are unavailable:")
+        for conflict in conflicts:
+            print(conflict)
+        print("\nPlease stop the existing processes or change dev server ports, then run again.")
+        sys.exit(1)
+
+def print_startup_failure(proc, service_name: str):
+    """Print startup diagnostics when a service exits early."""
+    code = proc.poll()
+    print(f"  ❌ {service_name} process exited before startup completed (exit code: {code})")
+
+    try:
+        stdout, stderr = proc.communicate(timeout=2)
+    except Exception:
+        stdout, stderr = "", ""
+
+    if stdout and stdout.strip():
+        print(f"  --- {service_name} stdout ---")
+        print(stdout.strip())
+    if stderr and stderr.strip():
+        print(f"  --- {service_name} stderr ---")
+        print(stderr.strip())
+
 def start_backend():
     """Start the FastAPI backend"""
     backend_dir = Path(__file__).parent.parent / "backend" / "api"
@@ -116,6 +185,9 @@ def start_backend():
     # Wait for backend to start
     print("  Waiting for backend to start...")
     for _ in range(30):  # 30 second timeout
+        if proc.poll() is not None:
+            print_startup_failure(proc, "Backend")
+            cleanup()
         try:
             import httpx
             response = httpx.get("http://localhost:8000/health")
@@ -138,11 +210,11 @@ def start_frontend():
     # Check if dependencies are installed
     if not (frontend_dir / "node_modules").exists():
         print("  Installing frontend dependencies...")
-        subprocess.run(["npm", "install"], cwd=frontend_dir, check=True)
+        subprocess.run([npm_cmd, "install"], cwd=frontend_dir, check=True)
 
     # Start the frontend
     proc = subprocess.Popen(
-        ["npm", "run", "dev"],
+        [npm_cmd, "run", "dev"],
         cwd=frontend_dir,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,  # Combine stderr with stdout
@@ -154,31 +226,22 @@ def start_frontend():
     # Wait for frontend to start
     print("  Waiting for frontend to start...")
     import httpx
-    import select
-
-    started = False
     for i in range(30):  # 30 second timeout
-        # Check for any output from the process using non-blocking read
-        if proc.stdout:
-            ready, _, _ = select.select([proc.stdout], [], [], 0)
-            if ready:
-                line = proc.stdout.readline()
-                if line:
-                    print(f"    Frontend: {line.strip()}")
-                    # NextJS dev server prints "Ready" when it's ready
-                    if "ready" in line.lower() or "compiled" in line.lower() or "started server" in line.lower():
-                        started = True
+        # If the process exits early, fail fast
+        if proc.poll() is not None:
+            print_startup_failure(proc, "Frontend")
+            cleanup()
 
-        # Also try to connect
-        if started or i > 5:  # Start checking after 5 seconds or when we see "ready"
+        # Start probing after a short warm-up
+        if i > 5:
             try:
-                response = httpx.get("http://localhost:3000", timeout=1)
+                httpx.get("http://localhost:3000", timeout=1)
                 print("  ✅ Frontend running at http://localhost:3000")
                 return proc
             except httpx.ConnectError:
                 pass  # Server not ready yet
             except:
-                # Any other response means server is up
+                # Any non-connection response means the server is up
                 print("  ✅ Frontend running at http://localhost:3000")
                 return proc
 
@@ -225,6 +288,7 @@ def main():
     # Check prerequisites
     check_requirements()
     check_env_files()
+    check_required_ports()
 
     # Install httpx if needed
     try:
