@@ -75,7 +75,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "api_lambda_packag
   }
 }
 
-# CI uploads hash file next to zip; Terraform reads the base64 sha256 for source_code_hash
+# CI uploads hash file next to zip; Terraform reads the base64 sha256 for source_code_hash.
+# Provider v5 only fills .body when S3 Content-Type matches "human-readable" types (e.g. text/plain), not application/octet-stream.
 data "aws_s3_object" "api_lambda_b64sha" {
   count  = var.api_lambda_package_source == "s3" ? 1 : 0
   bucket = aws_s3_bucket.api_lambda_packages[0].id

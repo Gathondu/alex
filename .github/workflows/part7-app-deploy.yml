@@ -138,7 +138,8 @@ jobs:
           ZIP_KEY="${ZIP_KEY:-deployments/api_lambda.zip}"
           HASH_KEY="${HASH_KEY:-deployments/api_lambda.base64sha256}"
           openssl dgst -sha256 -binary backend/api/api_lambda.zip | base64 -w0 > /tmp/api_lambda.base64sha256
-          aws s3 cp /tmp/api_lambda.base64sha256 "s3://${BUCKET}/${HASH_KEY}" --region "${AWS_REGION}"
+          # text/plain so terraform aws_s3_object (hashicorp/aws v5) populates .body; octet-stream is skipped
+          aws s3 cp /tmp/api_lambda.base64sha256 "s3://${BUCKET}/${HASH_KEY}" --region "${AWS_REGION}" --content-type text/plain
           aws s3 cp backend/api/api_lambda.zip "s3://${BUCKET}/${ZIP_KEY}" --region "${AWS_REGION}"
           echo "Uploaded s3://${BUCKET}/${ZIP_KEY} and hash sidecar."
           echo "Next: cd terraform/7_frontend && terraform apply"
