@@ -41,5 +41,5 @@ variable "openrouter_base_url" {
 variable "openrouter_model" {
   description = "Default model to use with openrouter"
   type        = string
-  default     = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+  default     = "openai/gpt-4o-mini-2024-07-18"
 }

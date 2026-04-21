@@ -7,7 +7,7 @@
 # Variables:
 #   DEFAULT_AWS_REGION     Required (e.g. us-east-1).
 #   OPENROUTER_BASE_URL    Optional if empty is OK for your app (e.g. https://openrouter.ai/api/v1).
-#   OPENROUTER_MODEL       Optional if empty is OK (e.g. openrouter/nvidia/nemotron-3-super-120b-a12b:free).
+#   OPENROUTER_MODEL       Optional if empty is OK (e.g. openai/gpt-4o-mini-2024-07-18).
 # Secrets:
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   Required for AWS CLI in this workflow.
 #   OPENAI_API_KEY / ALEX_API_KEY / ALEX_API_ENDPOINT / OPENROUTER_API_KEY   App Runner runtime;
